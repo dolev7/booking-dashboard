@@ -18,6 +18,10 @@ button:disabled { background: #8d9bbd; cursor: default; }
 button.small { padding: 5px 10px; font-size: 12.5px; }
 button.link { background: none; color: #b9c6e6; text-decoration: underline; padding: 4px; font-size: 12.5px; }
 input { width: 100%; padding: 9px 10px; border: 1px solid #c7cedd; border-radius: 6px; font: inherit; font-size: 14px; }
+textarea { width: 100%; padding: 9px 10px; border: 1px solid #c7cedd; border-radius: 6px; font: 13px Consolas, monospace; resize: vertical; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 12px 0; }
+.grid label { font-size: 12.5px; font-weight: 600; color: #3a4358; display: flex; flex-direction: column; gap: 4px; }
+summary { cursor: pointer; font-weight: 600; font-size: 15px; }
 .hint { color: #5a6478; font-size: 13.5px; line-height: 1.5; }
 .hint ol { margin: 8px 0; padding-left: 20px; }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
@@ -60,7 +64,7 @@ input { width: 100%; padding: 9px 10px; border: 1px solid #c7cedd; border-radius
       Create one at <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">github.com/settings/personal-access-tokens/new</a>:
       <ol class="hint">
         <li>Repository access: <strong>Only select repositories → booking-manager</strong></li>
-        <li>Permissions → Contents: <strong>Read-only</strong></li>
+        <li>Permissions → Contents: <strong>Read and write</strong> (write lets you add bookings from here)</li>
         <li>Permissions → Actions: <strong>Read and write</strong> (lets you trigger checks)</li>
       </ol>
     </p>
@@ -72,6 +76,29 @@ input { width: 100%; padding: 9px 10px; border: 1px solid #c7cedd; border-radius
 
   <section id="app" hidden>
     <p id="status"></p>
+    <details class="card" id="add-card">
+      <summary>＋ Add a booking</summary>
+      <p class="hint">Paste your booking confirmation email and hit Parse. The hotel's page URL and
+      the first price check happen automatically — run a check after saving, or wait for the next scheduled one.</p>
+      <textarea id="paste-box" rows="6" placeholder="Paste the confirmation email text here"></textarea>
+      <div class="row">
+        <button id="parse-btn">Parse confirmation</button>
+        <span id="add-msg" class="hint"></span>
+      </div>
+      <div id="form-grid" class="grid" hidden>
+        <label>Hotel *<input name="hotel" maxlength="300"></label>
+        <label>Check-in<input name="checkIn" type="date"></label>
+        <label>Check-out<input name="checkOut" type="date"></label>
+        <label>Free cancellation until<input name="cancellationDeadline" type="date"></label>
+        <label>Price<input name="price" type="number" min="0" step="0.01"></label>
+        <label>Currency<input name="currency" maxlength="3"></label>
+        <label>Room type<input name="roomType" maxlength="300"></label>
+        <label>Confirmation #<input name="confirmationNumber" maxlength="100"></label>
+        <label>Adults<input name="adults" type="number" min="0" max="20"></label>
+        <label>Children<input name="children" type="number" min="0" max="20"></label>
+      </div>
+      <div class="row"><button id="save-btn" hidden>Save booking</button></div>
+    </details>
     <div id="bookings"></div>
   </section>
 </main>
@@ -160,12 +187,100 @@ function card(b) {
   </div>`;
 }
 
+const CONTENTS = `/repos/${OWNER}/${REPO}/contents/data/bookings.json`;
+const b64decode = (c) => decodeURIComponent(escape(atob(c.replace(/\n/g, ''))));
+const b64encode = (s) => btoa(unescape(encodeURIComponent(s)));
+
 async function loadBookings() {
-  const file = await gh(`/repos/${OWNER}/${REPO}/contents/data/bookings.json?ref=main&nocache=${Date.now()}`);
-  const bookings = JSON.parse(decodeURIComponent(escape(atob(file.content.replace(/\n/g, '')))));
+  const file = await gh(`${CONTENTS}?ref=main&nocache=${Date.now()}`);
+  const bookings = JSON.parse(b64decode(file.content));
   bookings.sort((a, b) => (a.checkIn || '9999').localeCompare(b.checkIn || '9999'));
   $('#bookings').innerHTML = bookings.length ? bookings.map(card).join('') : '<div class="empty">No bookings yet.</div>';
   return bookings.length;
+}
+
+// Re-reads the file each attempt so a concurrent workflow commit (stale sha)
+// just causes a clean retry instead of losing data.
+async function persist(mutate, message) {
+  let lastErr;
+  for (let i = 0; i < 3; i++) {
+    const file = await gh(`${CONTENTS}?ref=main&nocache=${Date.now()}`);
+    const bookings = JSON.parse(b64decode(file.content));
+    mutate(bookings);
+    try {
+      await gh(CONTENTS, {
+        method: 'PUT',
+        body: JSON.stringify({ message, content: b64encode(JSON.stringify(bookings, null, 2)), sha: file.sha, branch: 'main' }),
+      });
+      return;
+    } catch (err) { lastErr = err; }
+  }
+  throw lastErr;
+}
+
+// The email parser is loaded from the private repo itself, so the dashboard
+// always parses exactly like the app — one parser, no copy to drift.
+let parserPromise = null;
+function loadParser() {
+  if (!parserPromise) {
+    parserPromise = gh(`/repos/${OWNER}/${REPO}/contents/src/lib/parser.js?ref=main`)
+      .then((f) => import(URL.createObjectURL(new Blob([b64decode(f.content)], { type: 'text/javascript' }))));
+  }
+  return parserPromise;
+}
+
+const FORM_FIELDS = ['hotel', 'checkIn', 'checkOut', 'cancellationDeadline', 'price', 'currency', 'roomType', 'confirmationNumber', 'adults', 'children'];
+let parsedExtras = {};
+
+async function parseEmail() {
+  const msg = $('#add-msg');
+  const text = $('#paste-box').value;
+  if (!text.trim()) { msg.textContent = 'Paste a confirmation first.'; return; }
+  msg.textContent = 'Parsing…';
+  try {
+    const parser = await loadParser();
+    const parsed = parser.parseConfirmation(text);
+    for (const f of FORM_FIELDS) {
+      const input = document.querySelector(`#form-grid [name="${f}"]`);
+      if (input) input.value = parsed[f] ?? '';
+    }
+    parsedExtras = parsed.childrenAges ? { childrenAges: parsed.childrenAges } : {};
+    $('#form-grid').hidden = false;
+    $('#save-btn').hidden = false;
+    msg.textContent = parsed.warnings.length ? `⚠ ${parsed.warnings.join(' · ')}` : '✓ all fields found — review and save';
+  } catch (err) {
+    msg.textContent = `Parse failed: ${err.message}`;
+  }
+}
+
+async function saveBooking() {
+  const msg = $('#add-msg'), btn = $('#save-btn');
+  const data = { ...parsedExtras };
+  for (const f of FORM_FIELDS) {
+    const v = document.querySelector(`#form-grid [name="${f}"]`)?.value.trim();
+    if (!v) continue;
+    data[f] = ['price', 'adults', 'children'].includes(f) ? Number(v) : v;
+  }
+  if (!data.hotel) { msg.textContent = 'Hotel name is required.'; return; }
+  btn.disabled = true;
+  msg.textContent = 'Saving to GitHub…';
+  try {
+    await persist((bookings) => bookings.push({
+      remindersSent: [], priceHistory: [], cancelled: false,
+      ...data,
+      id: crypto.randomUUID(), createdAt: new Date().toISOString(),
+    }), `Add booking: ${data.hotel} (via dashboard)`);
+    msg.textContent = '✓ Saved — hit "Run price check" to attach its URL and check it now.';
+    $('#paste-box').value = '';
+    $('#form-grid').hidden = true;
+    btn.hidden = true;
+    parsedExtras = {};
+    await loadBookings();
+  } catch (err) {
+    msg.textContent = `Save failed: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function latestRunId() {
@@ -245,6 +360,8 @@ $('#token-save').addEventListener('click', () => {
 });
 $('#token-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#token-save').click(); });
 $('#run-check').addEventListener('click', runCheck);
+$('#parse-btn').addEventListener('click', parseEmail);
+$('#save-btn').addEventListener('click', saveBooking);
 $('#refresh').addEventListener('click', start);
 $('#logout').addEventListener('click', () => { localStorage.removeItem('bm_token'); show(false); });
 
