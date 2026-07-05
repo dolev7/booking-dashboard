@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Booking Manager — Dashboard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏨</text></svg>">
+<style>
+* { box-sizing: border-box; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; margin: 0; background: #f2f4f8; color: #1c2333; }
+header { background: #1c2f5e; color: #fff; padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+header h1 { margin: 0; font-size: 20px; }
+main { max-width: 820px; margin: 20px auto; padding: 0 14px; }
+.card { background: #fff; border-radius: 10px; padding: 18px; box-shadow: 0 1px 4px rgba(20,30,60,.08); margin-bottom: 16px; }
+button { background: #2456c4; color: #fff; border: none; border-radius: 6px; padding: 9px 16px; font: inherit; font-size: 14px; cursor: pointer; }
+button:hover { background: #1b449e; }
+button:disabled { background: #8d9bbd; cursor: default; }
+button.small { padding: 5px 10px; font-size: 12.5px; }
+button.link { background: none; color: #b9c6e6; text-decoration: underline; padding: 4px; font-size: 12.5px; }
+input { width: 100%; padding: 9px 10px; border: 1px solid #c7cedd; border-radius: 6px; font: inherit; font-size: 14px; }
+.hint { color: #5a6478; font-size: 13.5px; line-height: 1.5; }
+.hint ol { margin: 8px 0; padding-left: 20px; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.booking-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.booking-head h3 { margin: 0; font-size: 16px; }
+.booking-head h3 a { color: inherit; }
+.dates { color: #5a6478; font-size: 13.5px; }
+.badges { display: flex; gap: 7px; margin: 9px 0 4px; flex-wrap: wrap; }
+.badge { border-radius: 6px; padding: 3px 9px; font-size: 12px; font-weight: 600; }
+.badge.green { background: #ddf3e1; color: #17632b; }
+.badge.amber { background: #fdeed2; color: #8a5200; }
+.badge.red { background: #fbdcd9; color: #93261e; }
+.badge.gray { background: #e6e9f0; color: #4a5368; }
+.badge.blue { background: #dde8fb; color: #1b449e; }
+.meta { color: #5a6478; font-size: 12.5px; margin-top: 6px; }
+#status { font-size: 13.5px; color: #3a4358; margin: 0 0 14px; min-height: 18px; }
+.err { color: #b3392f; }
+.ok { color: #1d7a34; }
+.empty { color: #5a6478; text-align: center; padding: 24px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🏨 Booking Manager</h1>
+  <div class="row" style="margin:0">
+    <button id="run-check" hidden>Run price check</button>
+    <button id="refresh" class="small" hidden>Refresh</button>
+    <button id="logout" class="link" hidden>forget token</button>
+  </div>
+</header>
+
+<main>
+  <section id="auth" class="card" hidden>
+    <h2 style="margin-top:0;font-size:17px">Connect to your bookings</h2>
+    <p class="hint">
+      This page is public but holds no data — it reads your private
+      <strong>booking-manager</strong> repo with a token stored only in this browser.
+    </p>
+    <p class="hint">
+      Create one at <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">github.com/settings/personal-access-tokens/new</a>:
+      <ol class="hint">
+        <li>Repository access: <strong>Only select repositories → booking-manager</strong></li>
+        <li>Permissions → Contents: <strong>Read-only</strong></li>
+        <li>Permissions → Actions: <strong>Read and write</strong> (lets you trigger checks)</li>
+      </ol>
+    </p>
+    <div class="row">
+      <input id="token-input" type="password" placeholder="github_pat_…" style="max-width:420px">
+      <button id="token-save">Connect</button>
+    </div>
+  </section>
+
+  <section id="app" hidden>
+    <p id="status"></p>
+    <div id="bookings"></div>
+  </section>
+</main>
+
+<script>
+const OWNER = 'dolev7', REPO = 'booking-manager', WORKFLOW = 'checks.yml';
+const $ = (s) => document.querySelector(s);
+
+let RATES = { home: 'ILS', rates: {} };
+
+function token() { return localStorage.getItem('bm_token') || ''; }
+
+async function gh(path, options = {}) {
+  const res = await fetch(`https://api.github.com${path}`, {
+    ...options,
+    headers: {
+      'Authorization': `Bearer ${token()}`,
+      'Accept': 'application/vnd.github+json',
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+    },
+  });
+  if (res.status === 401 || res.status === 404 && path.includes('/contents/')) {
+    throw Object.assign(new Error('Token rejected — check its permissions and expiry.'), { auth: true });
+  }
+  if (res.status === 204) return null;
+  if (!res.ok) throw new Error(`GitHub API: HTTP ${res.status}`);
+  return res.json();
+}
+
+async function loadRates() {
+  try {
+    const r = await (await fetch('https://api.frankfurter.dev/v1/latest?base=ILS')).json();
+    for (const [c, perHome] of Object.entries(r.rates || {})) RATES.rates[c] = 1 / perHome;
+  } catch {}
+}
+
+function money(price, currency) {
+  if (price == null) return '';
+  const base = `${Number(price).toLocaleString()} ${currency || ''}`.trim();
+  const rate = currency && currency !== 'ILS' ? RATES.rates[currency] : null;
+  return rate ? `${base} (≈₪${Math.round(price * rate).toLocaleString()})` : base;
+}
+
+function daysUntil(s) {
+  const [y, m, d] = s.split('-').map(Number);
+  const now = new Date();
+  return Math.round((new Date(y, m - 1, d) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+}
+
+function fmtDate(s) {
+  return s ? new Date(`${s}T00:00:00`).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' }) : '?';
+}
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s ?? '';
+  return d.innerHTML;
+}
+
+function cancellationBadge(b) {
+  if (b.cancelled) return '<span class="badge gray">Cancelled</span>';
+  if (!b.cancellationDeadline) return '<span class="badge gray">No free cancellation info</span>';
+  const days = daysUntil(b.cancellationDeadline);
+  if (days < 0) return `<span class="badge gray">Free cancellation ended ${esc(fmtDate(b.cancellationDeadline))}</span>`;
+  const color = days <= 7 ? 'red' : days <= 30 ? 'amber' : 'green';
+  return `<span class="badge ${color}">Free cancellation until ${esc(fmtDate(b.cancellationDeadline))} — ${days} day${days === 1 ? '' : 's'} left</span>`;
+}
+
+function card(b) {
+  const nights = b.checkIn && b.checkOut ? Math.round((new Date(b.checkOut) - new Date(b.checkIn)) / 86400000) : null;
+  const drop = b.lowestPriceSeen != null && b.lowestPriceSeen < b.price;
+  return `<div class="card">
+    <div class="booking-head">
+      <h3>${b.checkUrl || b.url ? `<a href="${esc(b.checkUrl || b.url)}" target="_blank" rel="noopener">${esc(b.hotel)}</a>` : esc(b.hotel)}</h3>
+      <span class="dates">${esc(fmtDate(b.checkIn))} → ${esc(fmtDate(b.checkOut))}${nights ? ` · ${nights} nights` : ''}</span>
+    </div>
+    <div class="badges">
+      ${cancellationBadge(b)}
+      ${b.price != null ? `<span class="badge blue">Booked at ${esc(money(b.price, b.currency))}</span>` : ''}
+      ${drop ? `<span class="badge green">↓ Seen at ${esc(money(b.lowestPriceSeen, b.currency))}</span>` : ''}
+    </div>
+    <div class="meta">${[
+      b.roomType, b.confirmationNumber ? `Confirmation # ${b.confirmationNumber}` : null,
+      b.lastChecked ? `Price last checked ${new Date(b.lastChecked).toLocaleString()}` : (b.url ? 'Not checked yet' : 'No URL — monitoring off'),
+    ].filter(Boolean).map(esc).join(' · ')}</div>
+  </div>`;
+}
+
+async function loadBookings() {
+  const file = await gh(`/repos/${OWNER}/${REPO}/contents/data/bookings.json?ref=main&nocache=${Date.now()}`);
+  const bookings = JSON.parse(decodeURIComponent(escape(atob(file.content.replace(/\n/g, '')))));
+  bookings.sort((a, b) => (a.checkIn || '9999').localeCompare(b.checkIn || '9999'));
+  $('#bookings').innerHTML = bookings.length ? bookings.map(card).join('') : '<div class="empty">No bookings yet.</div>';
+  return bookings.length;
+}
+
+async function latestRunId() {
+  const runs = await gh(`/repos/${OWNER}/${REPO}/actions/workflows/${WORKFLOW}/runs?per_page=1`);
+  return runs.workflow_runs?.[0]?.id ?? 0;
+}
+
+async function runCheck() {
+  const btn = $('#run-check'), status = $('#status');
+  btn.disabled = true;
+  status.className = '';
+  try {
+    const before = await latestRunId();
+    await gh(`/repos/${OWNER}/${REPO}/actions/workflows/${WORKFLOW}/dispatches`, {
+      method: 'POST',
+      body: JSON.stringify({ ref: 'main' }),
+    });
+    status.textContent = 'Check queued on GitHub…';
+    let run = null;
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 6000));
+      const runs = await gh(`/repos/${OWNER}/${REPO}/actions/workflows/${WORKFLOW}/runs?per_page=1`);
+      const latest = runs.workflow_runs?.[0];
+      if (!latest || latest.id === before) continue;
+      run = latest;
+      if (run.status === 'completed') break;
+      status.textContent = `Check ${run.status.replace('_', ' ')}… (usually ~2 minutes)`;
+    }
+    if (run && run.conclusion === 'success') {
+      status.textContent = 'Check finished ✓ — refreshing results…';
+      await new Promise((r) => setTimeout(r, 4000));
+      await loadBookings();
+      status.textContent = `Check finished ✓ — results updated ${new Date().toLocaleTimeString()}. Alerts (if any) were sent to WhatsApp/email.`;
+      status.className = 'ok';
+    } else {
+      status.textContent = `Check ${run ? `ended: ${run.conclusion}` : 'did not report back in time'} — see the Actions tab on GitHub.`;
+      status.className = 'err';
+    }
+  } catch (err) {
+    status.textContent = err.message;
+    status.className = 'err';
+    if (err.auth) show(false);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function show(connected) {
+  $('#auth').hidden = connected;
+  $('#app').hidden = !connected;
+  $('#run-check').hidden = !connected;
+  $('#refresh').hidden = !connected;
+  $('#logout').hidden = !connected;
+}
+
+async function start() {
+  if (!token()) return show(false);
+  show(true);
+  $('#status').textContent = 'Loading bookings…';
+  try {
+    await loadRates();
+    await loadBookings();
+    $('#status').textContent = '';
+  } catch (err) {
+    $('#status').textContent = err.message;
+    $('#status').className = 'err';
+    if (err.auth) { localStorage.removeItem('bm_token'); show(false); }
+  }
+}
+
+$('#token-save').addEventListener('click', () => {
+  const t = $('#token-input').value.trim();
+  if (!t) return;
+  localStorage.setItem('bm_token', t);
+  $('#token-input').value = '';
+  start();
+});
+$('#token-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#token-save').click(); });
+$('#run-check').addEventListener('click', runCheck);
+$('#refresh').addEventListener('click', start);
+$('#logout').addEventListener('click', () => { localStorage.removeItem('bm_token'); show(false); });
+
+start();
+</script>
+</body>
+</html>
