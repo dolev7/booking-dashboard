@@ -99,6 +99,10 @@ summary { cursor: pointer; font-weight: 600; font-size: 15px; }
       </div>
       <div class="row"><button id="save-btn" hidden>Save booking</button></div>
     </details>
+    <div class="card">
+      <strong style="font-size:13.5px">Recent check runs</strong>
+      <div class="badges" id="runs"><span class="hint">loading…</span></div>
+    </div>
     <div id="bookings"></div>
   </section>
 </main>
@@ -283,6 +287,21 @@ async function saveBooking() {
   }
 }
 
+async function loadRuns() {
+  try {
+    const r = await gh(`/repos/${OWNER}/${REPO}/actions/workflows/${WORKFLOW}/runs?per_page=5`);
+    const runs = r.workflow_runs || [];
+    $('#runs').innerHTML = runs.length ? runs.map((run) => {
+      const running = run.status !== 'completed';
+      const cls = running ? 'amber' : run.conclusion === 'success' ? 'green' : 'red';
+      const label = running ? run.status.replace('_', ' ') : run.conclusion;
+      return `<span class="badge ${cls}">${new Date(run.run_started_at).toLocaleString()} · ${run.event === 'workflow_dispatch' ? 'manual' : 'scheduled'} · ${esc(label)}</span>`;
+    }).join('') : '<span class="hint">no runs yet</span>';
+  } catch {
+    $('#runs').innerHTML = '<span class="hint">could not load runs</span>';
+  }
+}
+
 async function latestRunId() {
   const runs = await gh(`/repos/${OWNER}/${REPO}/actions/workflows/${WORKFLOW}/runs?per_page=1`);
   return runs.workflow_runs?.[0]?.id ?? 0;
@@ -315,6 +334,7 @@ async function runCheck() {
       await loadBookings();
       status.textContent = `Check finished ✓ — results updated ${new Date().toLocaleTimeString()}. Alerts (if any) were sent to WhatsApp/email.`;
       status.className = 'ok';
+      loadRuns();
     } else {
       status.textContent = `Check ${run ? `ended: ${run.conclusion}` : 'did not report back in time'} — see the Actions tab on GitHub.`;
       status.className = 'err';
@@ -343,6 +363,7 @@ async function start() {
   try {
     await loadRates();
     await loadBookings();
+    loadRuns();
     $('#status').textContent = '';
   } catch (err) {
     $('#status').textContent = err.message;
