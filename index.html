@@ -174,7 +174,8 @@ function cancellationBadge(b) {
 
 function card(b) {
   const nights = b.checkIn && b.checkOut ? Math.round((new Date(b.checkOut) - new Date(b.checkIn)) / 86400000) : null;
-  const drop = b.lowestPriceSeen != null && b.lowestPriceSeen < b.price;
+  const seen = b.latestPrice ?? b.lowestPriceSeen;
+  const drop = seen != null && seen < b.price;
   return `<div class="card">
     <div class="booking-head">
       <h3>${b.checkUrl || b.url ? `<a href="${esc(b.checkUrl || b.url)}" target="_blank" rel="noopener">${esc(b.hotel)}</a>` : esc(b.hotel)}</h3>
@@ -184,7 +185,8 @@ function card(b) {
     <div class="badges">
       ${cancellationBadge(b)}
       ${b.price != null ? `<span class="badge blue">Booked at ${esc(money(b.price, b.currency))}</span>` : ''}
-      ${drop ? `<span class="badge green">↓ Seen at ${esc(money(b.lowestPriceSeen, b.currency))}</span>` : ''}
+      ${drop ? `<span class="badge green">↓ Now at ${esc(money(seen, b.currency))} — save ${esc(money(Math.round((b.price - seen) * 100) / 100, b.currency))}</span>` : ''}
+      ${drop && (b.checkUrl || b.url) ? `<a class="badge green" style="text-decoration:none" href="${esc(b.checkUrl || b.url)}" target="_blank" rel="noopener">Rebook ↗</a>` : ''}
     </div>
     <div class="meta">${[
       b.confirmationNumber ? `Confirmation # ${b.confirmationNumber}` : null,
