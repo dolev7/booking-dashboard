@@ -97,6 +97,8 @@ summary { cursor: pointer; font-weight: 600; font-size: 15px; }
         <label>Confirmation #<input name="confirmationNumber" maxlength="100"></label>
         <label>Adults<input name="adults" type="number" min="0" max="20"></label>
         <label>Children<input name="children" type="number" min="0" max="20"></label>
+        <label style="grid-column:1/-1">Property URL (optional — found automatically when empty)
+          <input name="url" type="url" placeholder="https://www.booking.com/hotel/…?checkin=…"></label>
       </div>
       <div class="row"><button id="save-btn" hidden>Save booking</button></div>
     </details>
@@ -190,8 +192,9 @@ function card(b) {
     </div>
     <div class="meta">${[
       b.confirmationNumber ? `Confirmation # ${b.confirmationNumber}` : null,
-      b.lastChecked ? `Price last checked ${new Date(b.lastChecked).toLocaleString()}` : (b.url ? 'Not checked yet' : 'No URL — monitoring off'),
-    ].filter(Boolean).map(esc).join(' · ')}</div>
+      b.lastChecked ? `Price last checked ${new Date(b.lastChecked).toLocaleString()}` : (b.url ? 'Not checked yet' : 'No URL yet — attached automatically on the next check'),
+    ].filter(Boolean).map(esc).join(' · ')}
+    ${!b.url && !b.cancelled ? ` · <button class="small" style="padding:2px 8px" onclick="addUrl('${esc(b.id)}')">Add URL now</button>` : ''}</div>
   </div>`;
 }
 
@@ -237,7 +240,14 @@ function loadParser() {
   return parserPromise;
 }
 
-const FORM_FIELDS = ['hotel', 'checkIn', 'checkOut', 'cancellationDeadline', 'price', 'currency', 'roomType', 'confirmationNumber', 'adults', 'children'];
+const FORM_FIELDS = ['hotel', 'checkIn', 'checkOut', 'cancellationDeadline', 'price', 'currency', 'roomType', 'confirmationNumber', 'adults', 'children', 'url'];
+
+function isConfirmationLink(url) {
+  try {
+    const u = new URL(url);
+    return u.hostname === 'secure.booking.com' || u.pathname.includes('confirmation');
+  } catch { return false; }
+}
 let parsedExtras = {};
 
 async function parseEmail() {
@@ -270,6 +280,11 @@ async function saveBooking() {
     data[f] = ['price', 'adults', 'children'].includes(f) ? Number(v) : v;
   }
   if (!data.hotel) { msg.textContent = 'Hotel name is required.'; return; }
+  let note = '';
+  if (data.url && isConfirmationLink(data.url)) {
+    delete data.url;
+    note = ' (Your private confirmation link was ignored — it shows no prices. The hotel page is found automatically.)';
+  }
   btn.disabled = true;
   msg.textContent = 'Saving to GitHub…';
   try {
@@ -278,7 +293,7 @@ async function saveBooking() {
       ...data,
       id: crypto.randomUUID(), createdAt: new Date().toISOString(),
     }), `Add booking: ${data.hotel} (via dashboard)`);
-    msg.textContent = '✓ Saved — hit "Run price check" to attach its URL and check it now.';
+    msg.textContent = `✓ Saved — hit "Run price check" to ${data.url ? 'check it now' : 'attach its URL and check it now'}.${note}`;
     $('#paste-box').value = '';
     $('#form-grid').hidden = true;
     btn.hidden = true;
@@ -288,6 +303,28 @@ async function saveBooking() {
     msg.textContent = `Save failed: ${err.message}`;
   } finally {
     btn.disabled = false;
+  }
+}
+
+async function addUrl(id) {
+  const url = prompt("Paste the hotel's public booking.com page URL (with your dates):");
+  if (!url) return;
+  const status = $('#status');
+  if (isConfirmationLink(url)) {
+    status.textContent = 'That is the private confirmation link — it shows no prices. Leave it empty; the hotel page is found automatically on the next check.';
+    return;
+  }
+  try { new URL(url); } catch { status.textContent = 'Not a valid URL.'; return; }
+  status.textContent = 'Saving URL…';
+  try {
+    await persist((bookings) => {
+      const b = bookings.find((x) => x.id === id);
+      if (b) b.url = url;
+    }, 'Attach property URL via dashboard');
+    status.textContent = '✓ URL saved — run a price check to verify it.';
+    await loadBookings();
+  } catch (err) {
+    status.textContent = `Save failed: ${err.message} (the token needs Contents read-and-write)`;
   }
 }
 
