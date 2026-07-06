@@ -37,6 +37,7 @@ summary { cursor: pointer; font-weight: 600; font-size: 15px; }
 .badge.gray { background: #e6e9f0; color: #4a5368; }
 .badge.blue { background: #dde8fb; color: #1b449e; }
 .meta { color: #5a6478; font-size: 12.5px; margin-top: 6px; }
+.room { color: #2f3a54; font-size: 13.5px; font-weight: 600; margin-top: 3px; }
 #status { font-size: 13.5px; color: #3a4358; margin: 0 0 14px; min-height: 18px; }
 .err { color: #b3392f; }
 .ok { color: #1d7a34; }
@@ -179,13 +180,14 @@ function card(b) {
       <h3>${b.checkUrl || b.url ? `<a href="${esc(b.checkUrl || b.url)}" target="_blank" rel="noopener">${esc(b.hotel)}</a>` : esc(b.hotel)}</h3>
       <span class="dates">${esc(fmtDate(b.checkIn))} → ${esc(fmtDate(b.checkOut))}${nights ? ` · ${nights} nights` : ''}</span>
     </div>
+    ${b.roomType ? `<div class="room">${esc(b.roomType)}</div>` : ''}
     <div class="badges">
       ${cancellationBadge(b)}
       ${b.price != null ? `<span class="badge blue">Booked at ${esc(money(b.price, b.currency))}</span>` : ''}
       ${drop ? `<span class="badge green">↓ Seen at ${esc(money(b.lowestPriceSeen, b.currency))}</span>` : ''}
     </div>
     <div class="meta">${[
-      b.roomType, b.confirmationNumber ? `Confirmation # ${b.confirmationNumber}` : null,
+      b.confirmationNumber ? `Confirmation # ${b.confirmationNumber}` : null,
       b.lastChecked ? `Price last checked ${new Date(b.lastChecked).toLocaleString()}` : (b.url ? 'Not checked yet' : 'No URL — monitoring off'),
     ].filter(Boolean).map(esc).join(' · ')}</div>
   </div>`;
