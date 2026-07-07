@@ -350,11 +350,30 @@ async function latestRunId() {
   return runs.workflow_runs?.[0]?.id ?? 0;
 }
 
+// Price checks are region-sensitive, so the real check runs on the user's
+// own PC when it's reachable; the cloud fallback only refreshes reminders.
+async function tryLocalCheck(status) {
+  try {
+    const probe = await fetch('http://localhost:3000/api/status', { signal: AbortSignal.timeout(2500) });
+    if (!probe.ok) return false;
+  } catch { return false; }
+  status.textContent = 'Your PC is reachable — running a real price check from your region (~2 min)…';
+  const res = await fetch('http://localhost:3000/api/check-now', { method: 'POST' });
+  if (!res.ok) throw new Error(`local check failed: HTTP ${res.status}`);
+  const r = await res.json();
+  status.textContent = `Local check done: ${r.priceAlerts} alert(s), ${r.errors.length} issue(s)${r.errors.length ? ` — ${r.errors.map((e) => `${e.hotel}: ${e.error}`).join(' · ')}` : ''}. Syncing results…`;
+  await new Promise((w) => setTimeout(w, 8000));
+  await loadBookings();
+  return true;
+}
+
 async function runCheck() {
   const btn = $('#run-check'), status = $('#status');
   btn.disabled = true;
   status.className = '';
   try {
+    if (await tryLocalCheck(status)) return;
+    status.textContent = 'Your PC is not reachable — running the cloud reminders check instead (prices only update from your PC).';
     const before = await latestRunId();
     await gh(`/repos/${OWNER}/${REPO}/actions/workflows/${WORKFLOW}/dispatches`, {
       method: 'POST',
@@ -372,10 +391,10 @@ async function runCheck() {
       status.textContent = `Check ${run.status.replace('_', ' ')}… (usually ~2 minutes)`;
     }
     if (run && run.conclusion === 'success') {
-      status.textContent = 'Check finished ✓ — refreshing results…';
+      status.textContent = 'Cloud run finished ✓ — refreshing…';
       await new Promise((r) => setTimeout(r, 4000));
       await loadBookings();
-      status.textContent = `Check finished ✓ — results updated ${new Date().toLocaleTimeString()}. Alerts (if any) were sent to WhatsApp/email.`;
+      status.textContent = `Cloud reminders check finished ✓ ${new Date().toLocaleTimeString()}. Price checks run from your PC (5×/day while it's on).`;
       status.className = 'ok';
       loadRuns();
     } else {
