@@ -36,6 +36,7 @@ summary { cursor: pointer; font-weight: 600; font-size: 15px; }
 .badge.red { background: #fbdcd9; color: #93261e; }
 .badge.gray { background: #e6e9f0; color: #4a5368; }
 .badge.blue { background: #dde8fb; color: #1b449e; }
+.badge.purple { background: #ece9fb; color: #4c3a99; }
 .meta { color: #5a6478; font-size: 12.5px; margin-top: 6px; }
 .room { color: #2f3a54; font-size: 13.5px; font-weight: 600; margin-top: 3px; }
 #status { font-size: 13.5px; color: #3a4358; margin: 0 0 14px; min-height: 18px; }
@@ -189,6 +190,7 @@ function card(b) {
       ${b.price != null ? `<span class="badge blue">Booked at ${esc(money(b.price, b.currency))}</span>` : ''}
       ${drop ? `<span class="badge green">↓ Now at ${esc(money(seen, b.currency))} — save ${esc(money(Math.round((b.price - seen) * 100) / 100, b.currency))}</span>` : ''}
       ${drop && (b.checkUrl || b.url) ? `<a class="badge green" style="text-decoration:none" href="${esc(b.checkUrl || b.url)}" target="_blank" rel="noopener">Rebook ↗</a>` : ''}
+      ${!drop && seen != null && seen > b.price * 1.01 ? `<span class="badge purple">↑ Now at ${esc(money(seen, b.currency))} — you saved ${esc(money(Math.round((seen - b.price) * 100) / 100, b.currency))} by booking early</span>` : ''}
     </div>
     <div class="meta">${[
       b.confirmationNumber ? `Confirmation # ${b.confirmationNumber}` : null,
