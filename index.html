@@ -190,7 +190,7 @@ function card(b) {
       ${b.price != null ? `<span class="badge blue">Booked at ${esc(money(b.price, b.currency))}</span>` : ''}
       ${drop ? `<span class="badge green">↓ Now at ${esc(money(seen, b.currency))} — save ${esc(money(Math.round((b.price - seen) * 100) / 100, b.currency))}</span>` : ''}
       ${drop && (b.checkUrl || b.url) ? `<a class="badge green" style="text-decoration:none" href="${esc(b.checkUrl || b.url)}" target="_blank" rel="noopener">Rebook ↗</a>` : ''}
-      ${!drop && seen != null && seen > b.price * 1.01 ? `<span class="badge purple">↑ Now at ${esc(money(seen, b.currency))} — you saved ${esc(money(Math.round((seen - b.price) * 100) / 100, b.currency))} by booking early</span>` : ''}
+      ${!drop && b.baselinePrice != null && seen != null && seen > b.baselinePrice * 1.01 ? `<span class="badge purple">↑ Public rate now ${esc(money(seen, b.currency))} — up ${esc(money(Math.round((seen - b.baselinePrice) * 100) / 100, b.currency))} since tracking began</span>` : ''}
     </div>
     <div class="meta">${[
       b.confirmationNumber ? `Confirmation # ${b.confirmationNumber}` : null,
