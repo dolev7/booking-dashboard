@@ -100,6 +100,11 @@ summary { cursor: pointer; font-weight: 600; font-size: 15px; }
         <label>Children<input name="children" type="number" min="0" max="20"></label>
         <label style="grid-column:1/-1">Property URL (optional — found automatically when empty)
           <input name="url" type="url" placeholder="https://www.booking.com/hotel/…?checkin=…"></label>
+        <label style="grid-column:1/-1;flex-direction:row;align-items:center;gap:8px">
+          <input type="checkbox" name="watch" style="width:auto">
+          Availability watch — I haven't booked this; alert me when it becomes available for these dates
+        </label>
+        <label>Alert only under (optional, for watches)<input name="maxPrice" type="number" min="0"></label>
       </div>
       <div class="row"><button id="save-btn" hidden>Save booking</button></div>
     </details>
@@ -185,13 +190,20 @@ function card(b) {
       <span class="dates">${esc(fmtDate(b.checkIn))} → ${esc(fmtDate(b.checkOut))}${nights ? ` · ${nights} nights` : ''}</span>
     </div>
     ${b.roomType ? `<div class="room">${esc(b.roomType)}</div>` : ''}
-    <div class="badges">
+    ${b.watch ? `<div class="badges">
+      ${b.available === true
+        ? `<span class="badge green">✓ Available now at ${esc(money(b.latestPrice, b.currency))}</span>${(b.checkUrl || b.url) ? `<a class="badge green" style="text-decoration:none" href="${esc(b.checkUrl || b.url)}" target="_blank" rel="noopener">Book ↗</a>` : ''}`
+        : b.available === false
+          ? '<span class="badge gray">👁 Watching — sold out for your dates</span>'
+          : '<span class="badge gray">👁 Watching — not checked yet</span>'}
+      ${b.maxPrice ? `<span class="badge blue">Alert under ${esc(money(b.maxPrice, b.currency || ''))}</span>` : ''}
+    </div>` : `<div class="badges">
       ${cancellationBadge(b)}
       ${b.price != null ? `<span class="badge blue">Booked at ${esc(money(b.price, b.currency))}</span>` : ''}
       ${drop ? `<span class="badge green">↓ Now at ${esc(money(seen, b.currency))} — save ${esc(money(Math.round((b.price - seen) * 100) / 100, b.currency))}</span>` : ''}
       ${drop && (b.checkUrl || b.url) ? `<a class="badge green" style="text-decoration:none" href="${esc(b.checkUrl || b.url)}" target="_blank" rel="noopener">Rebook ↗</a>` : ''}
       ${!drop && b.baselinePrice != null && seen != null && seen > b.baselinePrice * 1.01 ? `<span class="badge purple">↑ Public rate now ${esc(money(seen, b.currency))} — up ${esc(money(Math.round((seen - b.baselinePrice) * 100) / 100, b.currency))} since tracking began</span>` : ''}
-    </div>
+    </div>`}
     <div class="meta">${[
       b.confirmationNumber ? `Confirmation # ${b.confirmationNumber}` : null,
       b.lastChecked ? `Price last checked ${new Date(b.lastChecked).toLocaleString()}` : (b.url ? 'Not checked yet' : 'No URL yet — attached automatically on the next check'),
@@ -276,11 +288,12 @@ async function parseEmail() {
 async function saveBooking() {
   const msg = $('#add-msg'), btn = $('#save-btn');
   const data = { ...parsedExtras };
-  for (const f of FORM_FIELDS) {
+  for (const f of [...FORM_FIELDS, 'maxPrice']) {
     const v = document.querySelector(`#form-grid [name="${f}"]`)?.value.trim();
     if (!v) continue;
-    data[f] = ['price', 'adults', 'children'].includes(f) ? Number(v) : v;
+    data[f] = ['price', 'adults', 'children', 'maxPrice'].includes(f) ? Number(v) : v;
   }
+  if (document.querySelector('#form-grid [name="watch"]')?.checked) data.watch = true;
   if (!data.hotel) { msg.textContent = 'Hotel name is required.'; return; }
   let note = '';
   if (data.url && isConfirmationLink(data.url)) {
