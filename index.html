@@ -102,7 +102,8 @@ summary { cursor: pointer; font-weight: 600; font-size: 15px; }
           <input name="url" type="url" placeholder="https://www.booking.com/hotel/…?checkin=…"></label>
         <label style="grid-column:1/-1;flex-direction:row;align-items:center;gap:8px">
           <input type="checkbox" name="watch" style="width:auto">
-          Availability watch — I haven't booked this; alert me when it becomes available for these dates
+          Availability watch — I haven't booked this; alert me when it becomes available.
+          With a URL pasted, dates &amp; guests are read from the link — nothing else needed.
         </label>
         <label>Alert only under (optional, for watches)<input name="maxPrice" type="number" min="0"></label>
       </div>
@@ -294,7 +295,7 @@ async function saveBooking() {
     data[f] = ['price', 'adults', 'children', 'maxPrice'].includes(f) ? Number(v) : v;
   }
   if (document.querySelector('#form-grid [name="watch"]')?.checked) data.watch = true;
-  if (!data.hotel) { msg.textContent = 'Hotel name is required.'; return; }
+  if (!data.hotel && !(data.watch && data.url)) { msg.textContent = 'Hotel name is required (or, for a watch, just a URL).'; return; }
   let note = '';
   if (data.url && isConfirmationLink(data.url)) {
     delete data.url;
